@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVC Charging Station Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-icon {
+            font-size: 2em;
+        }
+
+        .header-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .last-update {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .refresh-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .stations-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 30px;
+        }
+
+        .station-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s;
+        }
+
+        .station-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .station-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .station-title {
+            flex: 1;
+        }
+
+        .station-title h2 {
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 1.4em;
+        }
+
+        .station-subtitle {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-available {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-occupied {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-out-of-service {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-unknown {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .station-info {
+            margin-bottom: 20px;
+        }
+
+        .info-row {
+            display: flex;
+            padding: 8px 0;
+            font-size: 0.95em;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #666;
+            width: 120px;
+        }
+
+        .info-value {
+            color: #333;
+            flex: 1;
+        }
+
+        .connectors {
+            margin-top: 20px;
+        }
+
+        .connectors-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+
+        .connector-item {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .connector-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .connector-id {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .connector-status {
+            font-size: 0.85em;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        .connector-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .connector-detail {
+            font-size: 0.9em;
+        }
+
+        .detail-label {
+            color: #666;
+            font-size: 0.85em;
+        }
+
+        .detail-value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border-left: 4px solid #721c24;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.2em;
+        }
+
+        .icon {
+            font-size: 1.5em;
+            margin-right: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .stations-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header-info {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .refresh-btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <span class="header-icon">⚡</span>
+                EVC Charging Station Monitor
+            </h1>
+            <div class="header-info">
+                <div class="last-update" id="lastUpdate">
+                    Last updated: Loading...
+                </div>
+                <button class="refresh-btn" id="refreshBtn" onclick="refreshData()">
+                    <span>🔄</span>
+                    <span>Refresh Data</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="errorContainer"></div>
+        <div id="stationsContainer" class="stations-grid">
+            <div class="loading">Loading charging station data...</div>
+        </div>
+    </div>
+
+    <script>
+        let refreshing = false;
+
+        // HTML escape function to prevent XSS
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        // Alias for shorter code
+        const e = escapeHtml;
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return 'Never';
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        }
+
+        function getStatusClass(status) {
+            if (!status) return 'status-unknown';
+            const s = status.toLowerCase();
+            if (s.includes('available')) return 'status-available';
+            if (s.includes('occupied') || s.includes('charging')) return 'status-occupied';
+            if (s.includes('out') || s.includes('service')) return 'status-out-of-service';
+            return 'status-unknown';
+        }
+
+        function renderConnector(connector, evseStatus) {
+            return `
+                <div class="connector-item">
+                    <div class="connector-header">
+                        <div class="connector-id">${e(connector.connector_id) || 'Connector'}</div>
+                        <div class="connector-status ${getStatusClass(connector.status)}">
+                            ${e(connector.status) || 'UNKNOWN'}
+                        </div>
+                    </div>
+                    <div class="connector-details">
+                        <div class="connector-detail">
+                            <div class="detail-label">Type</div>
+                            <div class="detail-value">${e(connector.type) || 'N/A'}</div>
+                        </div>
+                        <div class="connector-detail">
+                            <div class="detail-label">Power</div>
+                            <div class="detail-value">${e(connector.max_power) || 'N/A'} kW</div>
+                        </div>
+                        <div class="connector-detail">
+                            <div class="detail-label">Power Type</div>
+                            <div class="detail-value">${e(connector.power_type) || 'N/A'}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderStation(station) {
+            // Handle provider that might be an object or string
+            let providerName = station.provider;
+            if (typeof providerName === 'object' && providerName !== null) {
+                providerName = providerName.name || JSON.stringify(providerName);
+            }
+            providerName = e(providerName);
+            
+            // Build full address
+            let fullAddress = station.address || '';
+            if (station.postal_code) fullAddress += ', ' + station.postal_code;
+            if (station.city) fullAddress += ' ' + station.city;
+            fullAddress = e(fullAddress);
+            
+            const connectorHTML = station.connectors && station.connectors.length > 0
+                ? station.connectors.map(evse => {
+                    const evseConnectors = evse.connectors || [];
+                    const evseStatus = e(evse.status) || 'UNKNOWN';
+                    return `
+                        <div style="margin-bottom: 15px;">
+                            <div style="font-size: 0.9em; color: #666; margin-bottom: 8px;">
+                                <strong>${e(evse.evse_id) || 'EVSE'}</strong> - 
+                                <span class="connector-status ${getStatusClass(evse.status)}" style="padding: 2px 8px; border-radius: 4px; font-size: 0.85em;">
+                                    ${evseStatus}
+                                </span>
+                            </div>
+                            ${evseConnectors.length > 0 ? evseConnectors.map(c => renderConnector(c, evse.status)).join('') : `
+                                <div class="connector-item">
+                                    <div class="connector-details">
+                                        <div class="connector-detail">
+                                            <div class="detail-label">Status</div>
+                                            <div class="detail-value">${evseStatus}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `}
+                        </div>
+                    `;
+                }).join('')
+                : '<div class="info-value">No connector information available</div>';
+
+            return `
+                <div class="station-card">
+                    <div class="station-header">
+                        <div class="station-title">
+                            <h2>${e(station.qr_code) || e(station.config_name) || 'Unknown Station'}</h2>
+                            <div class="station-subtitle">${e(station.location_name) || e(station.address) || 'No location'}</div>
+                        </div>
+                        <div class="status-badge ${getStatusClass(station.status)}">
+                            ${e(station.status) || 'UNKNOWN'}
+                        </div>
+                    </div>
+                    
+                    <div class="station-info">
+                        ${providerName ? `
+                            <div class="info-row">
+                                <div class="info-label">Provider:</div>
+                                <div class="info-value">${providerName}</div>
+                            </div>
+                        ` : ''}
+                        ${fullAddress ? `
+                            <div class="info-row">
+                                <div class="info-label">Address:</div>
+                                <div class="info-value">${fullAddress}</div>
+                            </div>
+                        ` : ''}
+                        ${station.timestamp ? `
+                            <div class="info-row">
+                                <div class="info-label">Updated:</div>
+                                <div class="info-value">${e(station.timestamp)}</div>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="connectors">
+                        <div class="connectors-title">🔌 Connectors</div>
+                        ${connectorHTML}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function loadData() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayStations(data.stations, data.last_update);
+                } else {
+                    showError('Failed to load data');
+                }
+            } catch (error) {
+                showError('Error connecting to server: ' + error.message);
+            }
+        }
+
+        async function refreshData() {
+            if (refreshing) return;
+            
+            refreshing = true;
+            const btn = document.getElementById('refreshBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span><span>Refreshing...</span>';
+            
+            try {
+                const response = await fetch('/api/refresh');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayStations(data.stations, data.last_update);
+                    hideError();
+                } else {
+                    showError(data.error || 'Failed to refresh data. Token may be expired.');
+                }
+            } catch (error) {
+                showError('Error refreshing data: ' + error.message);
+            } finally {
+                refreshing = false;
+                btn.disabled = false;
+                btn.innerHTML = '<span>🔄</span><span>Refresh Data</span>';
+            }
+        }
+
+        function displayStations(stations, lastUpdate) {
+            const container = document.getElementById('stationsContainer');
+            const updateEl = document.getElementById('lastUpdate');
+            
+            if (!stations || stations.length === 0) {
+                container.innerHTML = '<div class="loading">No charging station data available. Click "Refresh Data" to fetch.</div>';
+                updateEl.textContent = 'Last updated: Never';
+                return;
+            }
+            
+            container.innerHTML = stations.map(renderStation).join('');
+            updateEl.textContent = `Last updated: ${formatTimestamp(lastUpdate)}`;
+        }
+
+        function showError(message) {
+            const container = document.getElementById('errorContainer');
+            container.innerHTML = `
+                <div class="error-message">
+                    <strong>⚠️ Error:</strong> ${e(message)}
+                </div>
+            `;
+        }
+
+        function hideError() {
+            document.getElementById('errorContainer').innerHTML = '';
+        }
+
+        // Load data on page load
+        loadData();
+
+        // Auto-refresh every 5 minutes
+        setInterval(() => {
+            if (!refreshing) {
+                refreshData();
+            }
+        }, 300000);
+    </script>
+</body>
+</html>
