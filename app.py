@@ -294,17 +294,26 @@ def ha_summary():
     Summary endpoint for Home Assistant
     Great for a single sensor showing overall availability
     
-    Home Assistant config:
+    Home Assistant config example (text sensor):
       sensor:
         - platform: rest
           resource: http://YOUR_IP:5000/api/v1/summary
-          name: "Charging Stations"
-          value_template: "{{ value_json.available }}/{{ value_json.total }} available"
+          name: "EVC Chargers Status"
+          value_template: "{{ value_json.availability_text }}"
           json_attributes:
             - available
             - occupied  
             - total
-            - stations
+            - any_available
+            - all_available
+    
+    Or for a numeric sensor (available count):
+      sensor:
+        - platform: rest
+          resource: http://YOUR_IP:5000/api/v1/summary
+          name: "EVC Chargers Available"
+          value_template: "{{ value_json.available }}"
+          unit_of_measurement: "stations"
     """
     stations = cache.get("stations") or []
     
@@ -318,6 +327,7 @@ def ha_summary():
         "unavailable": len(stations) - available - occupied,
         "all_available": available == len(stations),
         "any_available": available > 0,
+        "availability_text": f"{available}/{len(stations)} available",
         "stations": [
             {
                 "qr_code": s.get("qr_code"),
