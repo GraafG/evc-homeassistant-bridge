@@ -455,6 +455,8 @@
                 
                 if (data.success) {
                     displayStations(data.stations, data.last_update);
+                    if (data.error) showError(data.error);
+                    else hideError();
                 } else {
                     showError('Failed to load data');
                 }
@@ -472,12 +474,11 @@
             btn.innerHTML = '<span class="spinner"></span><span>Refreshing...</span>';
             
             try {
-                const response = await fetch('/api/refresh');
+                const response = await fetch('/api/refresh', { method: 'POST' });
                 const data = await response.json();
                 
                 if (data.success) {
-                    displayStations(data.stations, data.last_update);
-                    hideError();
+                    await waitForRefresh();
                 } else {
                     showError(data.error || 'Failed to refresh data. Token may be expired.');
                 }
@@ -488,6 +489,21 @@
                 btn.disabled = false;
                 btn.innerHTML = '<span>🔄</span><span>Refresh Data</span>';
             }
+        }
+
+        async function waitForRefresh() {
+            for (let attempt = 0; attempt < 60; attempt++) {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                if (!data.refreshing) {
+                    displayStations(data.stations, data.last_update);
+                    if (data.error) showError(data.error);
+                    else hideError();
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            throw new Error('Refresh is taking longer than expected');
         }
 
         function displayStations(stations, lastUpdate) {

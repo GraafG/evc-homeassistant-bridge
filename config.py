@@ -5,6 +5,18 @@ Reads from environment variables for Docker, falls back to defaults for local de
 
 import os
 
+
+def positive_int_env(name, default):
+    """Read a positive integer from the environment with a clear error."""
+    raw_value = os.environ.get(name, str(default))
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+    return value
+
 # =============================================================================
 # CHARGING STATIONS
 # =============================================================================
@@ -19,12 +31,18 @@ def parse_stations_env():
     
     stations = []
     for item in env_stations.split(","):
+        if not item.strip():
+            continue
         if ":" in item:
             qr_code, name = item.split(":", 1)
-            stations.append({"qr_code": qr_code.strip(), "name": name.strip()})
+            qr_code = qr_code.strip()
+            name = name.strip() or qr_code
         else:
             # Just QR code, use it as name too
-            stations.append({"qr_code": item.strip(), "name": item.strip()})
+            qr_code = item.strip()
+            name = qr_code
+        if qr_code:
+            stations.append({"qr_code": qr_code, "name": name})
     return stations if stations else None
 
 # Try environment first, then fall back to defaults
@@ -50,7 +68,7 @@ STATIONS = parse_stations_env() or [
 
 API_CONFIG = {
     "base_url": "https://mobile-gateway.evc-net.com/api/v1",
-    "api_key": "dab0e236-94b6-4b5d-a856-7d8773ceb496",
+    "api_key": os.environ.get("EVC_API_KEY"),
     "headers": {
         "accept": "application/json, text/plain, */*",
         "content-type": "application/json",
@@ -72,7 +90,7 @@ API_CONFIG = {
 
 SERVER_CONFIG = {
     "host": "0.0.0.0",
-    "port": int(os.environ.get("PORT", 5000)),
-    "refresh_interval": int(os.environ.get("REFRESH_INTERVAL", 300)),
-    "auto_refresh_seconds": int(os.environ.get("REFRESH_INTERVAL", 300))
+    "port": positive_int_env("PORT", 5000),
+    "refresh_interval": positive_int_env("REFRESH_INTERVAL", 300),
+    "log_level": os.environ.get("LOG_LEVEL", "INFO").upper(),
 }
