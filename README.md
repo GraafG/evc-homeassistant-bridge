@@ -6,21 +6,29 @@ Real-time status monitoring for EVC Network charging stations with Home Assistan
 
 ### Docker (Recommended for Home Assistant)
 
+The tracked `.env` contains only non-sensitive station settings. Keep credentials
+out of it; supply `EVC_API_KEY` through your shell or deployment secret configuration.
+
 ```bash
-# Build and run
+# Configure the API key separately from the tracked .env
+export EVC_API_KEY="YOUR_API_KEY"
+# Edit station settings in .env, then build and run
 docker-compose up -d
 
 # Or manually
 docker build -t evc-monitor .
-docker run -d -p 5000:5000 --name evc-monitor evc-monitor
+docker run -d -p 5000:5000 --env-file .env -e EVC_API_KEY --name evc-monitor evc-monitor
 ```
 
 ### Local Development
 
 ```powershell
-pip install -r requirements.txt
+$env:EVC_API_KEY = "YOUR_API_KEY"
+pip install -r requirements-dev.txt
 python app.py
 ```
+
+Run the test suite with `python -m pytest`.
 
 ## 📡 API Endpoints
 
@@ -30,6 +38,7 @@ python app.py
 | `/api/v1/stations` | All stations (JSON) |
 | `/api/v1/station/<qr_code>` | Single station details |
 | `/api/v1/summary` | Summary with counts |
+| `POST /api/refresh` | Start a non-blocking refresh (returns HTTP 202) |
 | `/health` | Health check for Docker |
 
 ## 🏠 Home Assistant Integration
@@ -155,26 +164,30 @@ automation:
 
 ## ⚙️ Configuration
 
-Edit `config.py` to add charging stations:
+Edit station settings in the tracked `.env`; `.env.example` is a configuration
+reference. Do not put real API keys, tokens, or passwords in either tracked file.
 
-```python
-STATIONS = [
-    {"qr_code": "YOUR-CODE*1", "name": "Station 1"},
-    {"qr_code": "YOUR-CODE*2", "name": "Station 2"},
-    # Add more stations here
-]
+```dotenv
+STATIONS=YOUR-CODE*1:Station 1,YOUR-CODE*2:Station 2
 ```
+
+Docker Compose reads `.env` automatically. For local Python runs, set environment
+variables in your shell; the application does not load `.env` itself.
 
 ## 📁 Project Structure
 
 ```
+├── .env                # Tracked, non-sensitive station defaults
 ├── app.py              # Main server with API
 ├── cli.py              # Command-line tool
 ├── config.py           # Station configuration
+├── evc_api.py          # Shared EVC API client
 ├── templates/
 │   └── index.html      # Web UI
+├── tests/              # Unit tests
 ├── Dockerfile          # Docker build
 ├── docker-compose.yml  # Docker Compose
+├── requirements-dev.txt # Development and test dependencies
 └── requirements.txt    # Python dependencies
 ```
 
@@ -182,7 +195,12 @@ STATIONS = [
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `EVC_API_KEY` | Required | API key used by the EVC web application; supply outside tracked `.env` |
+| `STATIONS` | Example stations | Comma-separated `QR_CODE:Display Name` entries |
 | `TZ` | UTC | Timezone for timestamps |
+| `PORT` | `5000` | HTTP server port |
+| `REFRESH_INTERVAL` | `300` | Background refresh interval in seconds |
+| `LOG_LEVEL` | `INFO` | Python logging level |
 
 ## 📝 License
 

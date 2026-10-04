@@ -1,5 +1,6 @@
-# Environment files (contain your station codes)
-.env
+# Local environment overrides (.env contains tracked, non-sensitive defaults)
+.env.*
+!.env.example
 
 # Python
 __pycache__/

@@ -4,88 +4,44 @@ Real-time status monitoring via direct API calls
 Exposes REST API for Home Assistant integration
 """
 
-import requests
 import uuid
+import logging
 import threading
 import time
 from datetime import datetime
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify
 from config import STATIONS, API_CONFIG, SERVER_CONFIG
+from evc_api import EVCClient
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 # Cache for station data
 cache = {
     "stations": [],
     "timestamp": None,
-    "last_fetch": None
+    "last_fetch": None,
+    "last_error": None,
+    "refreshing": False,
 }
+cache_lock = threading.Lock()
+refresh_lock = threading.Lock()
+stop_event = threading.Event()
+_api_client = None
 
 
-def get_headers():
-    """Get API headers with API key"""
-    headers = API_CONFIG["headers"].copy()
-    headers["x-api-key"] = API_CONFIG["api_key"]
-    return headers
+def get_api_client() -> EVCClient:
+    """Create the API client lazily so the web app can report config errors."""
+    global _api_client
+    if _api_client is None:
+        _api_client = EVCClient(API_CONFIG)
+    return _api_client
 
 
-def get_guest_token(device_id: str) -> str:
-    """Get a fresh guest token from the API"""
-    url = f"{API_CONFIG['base_url']}/user/guestLogin"
-    
-    payload = {
-        "deviceId": device_id,
-        "locale": API_CONFIG["locale"],
-        "platform": API_CONFIG["platform"],
-        "serviceName": API_CONFIG["service_name"],
-        "serviceVersion": API_CONFIG["service_version"],
-        "appVersion": API_CONFIG["app_version"],
-        "appIdentifier": API_CONFIG["app_identifier"],
-        "webUrl": "directpayment.evc-net.com"
-    }
-    
-    try:
-        response = requests.post(url, headers=get_headers(), json=payload, timeout=10)
-        if response.ok:
-            return response.json().get("data", {}).get("token")
-    except requests.RequestException:
-        pass
-    return None
-
-
-def get_station_status(qr_code: str, device_id: str) -> dict:
-    """Fetch status for a single charging station"""
-    
-    # Get fresh token (tokens are single-use)
-    token = get_guest_token(device_id)
-    if not token:
-        return {"error": "Failed to get authentication token"}
-    
-    url = f"{API_CONFIG['base_url']}/location/getLocationDetails"
-    
-    payload = {
-        "locationId": "",
-        "channelId": "",
-        "qrCode": qr_code,
-        "evseId": "",
-        "token": token,
-        "referenceGeoBounds": {},
-        "deviceId": device_id,
-        "locale": API_CONFIG["locale"],
-        "platform": API_CONFIG["platform"],
-        "serviceName": API_CONFIG["service_name"],
-        "serviceVersion": API_CONFIG["service_version"],
-        "appIdentifier": API_CONFIG["app_identifier"],
-        "appVersion": API_CONFIG["app_version"]
-    }
-    
-    try:
-        response = requests.post(url, headers=get_headers(), json=payload, timeout=10)
-        if response.ok:
-            return response.json().get("data", {})
-        return {"error": f"API error: {response.status_code}"}
-    except requests.RequestException as e:
-        return {"error": str(e)}
+def get_cache_snapshot() -> dict:
+    """Return a consistent copy of the cache for request handlers."""
+    with cache_lock:
+        return {**cache, "stations": list(cache["stations"])}
 
 
 def parse_station_data(data: dict, station: dict) -> dict:
@@ -146,33 +102,63 @@ def parse_station_data(data: dict, station: dict) -> dict:
     }
 
 
-def fetch_all_stations() -> list:
+def fetch_all_stations(client: EVCClient | None = None) -> list:
     """Fetch status for all configured stations"""
     results = []
     device_id = str(uuid.uuid4())
+    client = client or get_api_client()
     
     for station in STATIONS:
-        data = get_station_status(station["qr_code"], device_id)
+        data = client.get_station_status(station["qr_code"], device_id)
         parsed = parse_station_data(data, station)
         results.append(parsed)
     
     return results
 
 
+def _perform_refresh() -> None:
+    """Refresh cache state after the caller has acquired the refresh lock."""
+    try:
+        stations = fetch_all_stations()
+        now = datetime.now().astimezone()
+        with cache_lock:
+            cache.update(
+                stations=stations,
+                timestamp=now.isoformat(),
+                last_fetch=time.time(),
+                last_error=None,
+            )
+        logger.info("Refreshed %d stations", len(stations))
+    except Exception as exc:
+        logger.exception("Station refresh failed")
+        with cache_lock:
+            cache["last_error"] = str(exc)
+    finally:
+        with cache_lock:
+            cache["refreshing"] = False
+        refresh_lock.release()
+
+
+def refresh_cache(blocking: bool = True) -> bool:
+    """Start a refresh unless one is already running."""
+    if not refresh_lock.acquire(blocking=False):
+        return False
+
+    with cache_lock:
+        cache["refreshing"] = True
+
+    if blocking:
+        _perform_refresh()
+    else:
+        threading.Thread(target=_perform_refresh, daemon=True).start()
+    return True
+
+
 def background_refresh():
     """Background thread to refresh data periodically"""
-    while True:
-        try:
-            stations = fetch_all_stations()
-            cache["stations"] = stations
-            cache["timestamp"] = datetime.now().isoformat()
-            cache["last_fetch"] = time.time()
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Refreshed {len(stations)} stations")
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Refresh error: {e}")
-        
-        # Sleep for configured interval (default 5 minutes)
-        time.sleep(SERVER_CONFIG.get("refresh_interval", 300))
+    while not stop_event.is_set():
+        refresh_cache()
+        stop_event.wait(SERVER_CONFIG["refresh_interval"])
 
 
 # =============================================================================
@@ -188,31 +174,25 @@ def index():
 @app.route("/api/status")
 def api_status():
     """Return cached station status (for web UI)"""
+    snapshot = get_cache_snapshot()
     return jsonify({
         "success": True,
-        "stations": cache["stations"] or [],
-        "last_update": cache["timestamp"]
+        "stations": snapshot["stations"],
+        "last_update": snapshot["timestamp"],
+        "refreshing": snapshot["refreshing"],
+        "error": snapshot["last_error"],
     })
 
 
-@app.route("/api/refresh")
+@app.post("/api/refresh")
 def api_refresh():
-    """Refresh station data and return results (for web UI)"""
-    try:
-        stations = fetch_all_stations()
-        cache["stations"] = stations
-        cache["timestamp"] = datetime.now().isoformat()
-        
-        return jsonify({
-            "success": True,
-            "stations": stations,
-            "last_update": cache["timestamp"]
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+    """Schedule a non-blocking refresh for the web UI."""
+    started = refresh_cache(blocking=False)
+    return jsonify({
+        "success": True,
+        "started": started,
+        "message": "Refresh started" if started else "Refresh already in progress",
+    }), 202
 
 
 # =============================================================================
@@ -225,10 +205,13 @@ def ha_all_stations():
     Get all stations - Home Assistant REST sensor friendly
     Returns flat list with all station data
     """
+    snapshot = get_cache_snapshot()
     return jsonify({
-        "stations": cache["stations"] or [],
-        "count": len(cache["stations"] or []),
-        "last_update": cache["timestamp"]
+        "stations": snapshot["stations"],
+        "count": len(snapshot["stations"]),
+        "last_update": snapshot["timestamp"],
+        "refreshing": snapshot["refreshing"],
+        "error": snapshot["last_error"],
     })
 
 
@@ -260,7 +243,8 @@ def ha_single_station(qr_code):
     if len(qr_code) > 50:
         return jsonify({"error": "QR code too long"}), 400
     
-    stations = cache.get("stations") or []
+    snapshot = get_cache_snapshot()
+    stations = snapshot["stations"]
     
     for station in stations:
         if station.get("qr_code") == qr_code:
@@ -281,7 +265,7 @@ def ha_single_station(qr_code):
                 "connector_type": first_conn.get("type"),
                 "power_type": first_conn.get("power_type"),
                 "max_power_kw": first_conn.get("max_power"),
-                "last_update": cache["timestamp"],
+                "last_update": snapshot["timestamp"],
                 "available": station.get("status") == "AVAILABLE"
             })
     
@@ -315,7 +299,8 @@ def ha_summary():
           value_template: "{{ value_json.available }}"
           unit_of_measurement: "stations"
     """
-    stations = cache.get("stations") or []
+    snapshot = get_cache_snapshot()
+    stations = snapshot["stations"]
     
     available = sum(1 for s in stations if s.get("status") == "AVAILABLE")
     occupied = sum(1 for s in stations if s.get("status") in ["OCCUPIED", "CHARGING"])
@@ -325,7 +310,7 @@ def ha_summary():
         "available": available,
         "occupied": occupied,
         "unavailable": len(stations) - available - occupied,
-        "all_available": available == len(stations),
+        "all_available": bool(stations) and available == len(stations),
         "any_available": available > 0,
         "availability_text": f"{available}/{len(stations)} available",
         "stations": [
@@ -337,21 +322,33 @@ def ha_summary():
             }
             for s in stations
         ],
-        "last_update": cache["timestamp"]
+        "last_update": snapshot["timestamp"],
+        "refreshing": snapshot["refreshing"],
+        "error": snapshot["last_error"],
     })
 
 
 @app.route("/health")
 def health():
     """Health check endpoint for Docker/monitoring"""
-    age = time.time() - cache.get("last_fetch", 0) if cache.get("last_fetch") else None
+    snapshot = get_cache_snapshot()
+    age = time.time() - snapshot["last_fetch"] if snapshot["last_fetch"] else None
+    stale_after = SERVER_CONFIG["refresh_interval"] * 2
+    if snapshot["last_fetch"] is None:
+        status = "starting"
+    elif snapshot["last_error"] or (age is not None and age > stale_after):
+        status = "degraded"
+    else:
+        status = "healthy"
     
     return jsonify({
-        "status": "healthy",
+        "status": status,
         "stations_configured": len(STATIONS),
-        "stations_cached": len(cache.get("stations") or []),
-        "last_update": cache["timestamp"],
-        "cache_age_seconds": round(age, 1) if age else None
+        "stations_cached": len(snapshot["stations"]),
+        "last_update": snapshot["timestamp"],
+        "cache_age_seconds": round(age, 1) if age is not None else None,
+        "refreshing": snapshot["refreshing"],
+        "error": snapshot["last_error"],
     })
 
 
@@ -360,6 +357,10 @@ def health():
 # =============================================================================
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=getattr(logging, SERVER_CONFIG["log_level"], logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     print("=" * 60)
     print("  EVC Charging Station Monitor")
     print("  Home Assistant Ready")
@@ -385,7 +386,6 @@ if __name__ == "__main__":
     refresh_thread.start()
     
     print("Server starting...\n")
-    app.run(
-        host=SERVER_CONFIG["host"],
-        port=SERVER_CONFIG["port"]
-    )
+    from waitress import serve
+
+    serve(app, host=SERVER_CONFIG["host"], port=SERVER_CONFIG["port"])

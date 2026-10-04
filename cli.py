@@ -3,77 +3,12 @@ EVC Charging Station Monitor - Command Line Interface
 Fetch and display station status from the terminal
 """
 
-import requests
 import uuid
 import json
 import argparse
 from datetime import datetime
 from config import STATIONS, API_CONFIG
-
-
-def get_headers():
-    """Get API headers with API key"""
-    headers = API_CONFIG["headers"].copy()
-    headers["x-api-key"] = API_CONFIG["api_key"]
-    return headers
-
-
-def get_guest_token(device_id: str) -> str:
-    """Get a fresh guest token from the API"""
-    url = f"{API_CONFIG['base_url']}/user/guestLogin"
-    
-    payload = {
-        "deviceId": device_id,
-        "locale": API_CONFIG["locale"],
-        "platform": API_CONFIG["platform"],
-        "serviceName": API_CONFIG["service_name"],
-        "serviceVersion": API_CONFIG["service_version"],
-        "appVersion": API_CONFIG["app_version"],
-        "appIdentifier": API_CONFIG["app_identifier"],
-        "webUrl": "directpayment.evc-net.com"
-    }
-    
-    try:
-        response = requests.post(url, headers=get_headers(), json=payload, timeout=10)
-        if response.ok:
-            return response.json().get("data", {}).get("token")
-    except requests.RequestException:
-        pass
-    return None
-
-
-def get_station_status(qr_code: str, device_id: str) -> dict:
-    """Fetch status for a single charging station"""
-    
-    token = get_guest_token(device_id)
-    if not token:
-        return {"error": "Failed to get authentication token"}
-    
-    url = f"{API_CONFIG['base_url']}/location/getLocationDetails"
-    
-    payload = {
-        "locationId": "",
-        "channelId": "",
-        "qrCode": qr_code,
-        "evseId": "",
-        "token": token,
-        "referenceGeoBounds": {},
-        "deviceId": device_id,
-        "locale": API_CONFIG["locale"],
-        "platform": API_CONFIG["platform"],
-        "serviceName": API_CONFIG["service_name"],
-        "serviceVersion": API_CONFIG["service_version"],
-        "appIdentifier": API_CONFIG["app_identifier"],
-        "appVersion": API_CONFIG["app_version"]
-    }
-    
-    try:
-        response = requests.post(url, headers=get_headers(), json=payload, timeout=10)
-        if response.ok:
-            return response.json().get("data", {})
-        return {"error": f"API error: {response.status_code}"}
-    except requests.RequestException as e:
-        return {"error": str(e)}
+from evc_api import EVCClient
 
 
 def format_status(status: str) -> str:
@@ -153,6 +88,10 @@ def main():
     
     args = parser.parse_args()
     device_id = str(uuid.uuid4())
+    try:
+        api_client = EVCClient(API_CONFIG)
+    except ValueError as exc:
+        parser.error(str(exc))
     
     print("\n" + "=" * 60)
     print("  EVC Charging Station Monitor")
@@ -169,7 +108,7 @@ def main():
     
     for station in stations:
         print(f"\nFetching {station['name']}...", end=" ", flush=True)
-        data = get_station_status(station["qr_code"], device_id)
+        data = api_client.get_station_status(station["qr_code"], device_id)
         
         if "error" in data:
             print(f"❌ {data['error']}")
